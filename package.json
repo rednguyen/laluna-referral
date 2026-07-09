@@ -1,0 +1,26 @@
+{
+  "name": "laluna-referral",
+  "version": "1.0.0",
+  "description": "La Luna Hotel Referral Coupon System",
+  "main": "server.js",
+  "scripts": {
+    "client": "cd client && npm run dev",
+    "server": "node server.js",
+    "server:watch": "nodemon --watch server.js --watch .env --ext js,env --exec \"node server.js\"",
+    "dev": "concurrently \"npm run server:watch\" \"npm run client\"",
+    "install-all": "npm install && cd client && npm install",
+    "build": "cd client && npm run build"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.38.0",
+    "better-sqlite3": "^9.2.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "nodemailer": "^6.9.7"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "nodemon": "^3.0.1"
+  }
+}
