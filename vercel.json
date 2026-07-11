@@ -1,5 +1,7 @@
 {
   "version": 2,
+  "buildCommand": "cd client && npm install && npm run build",
+  "installCommand": "npm install && cd client && npm install",
   "builds": [
     {
       "src": "api/index.js",
@@ -16,12 +18,8 @@
       "dest": "/api/index.js"
     },
     {
-      "src": "/",
-      "dest": "/client/dist/index.html"
-    },
-    {
       "src": "/(.*)",
-      "dest": "/client/dist/$1"
+      "dest": "/client/dist/index.html"
     }
   ]
 }
