@@ -1,8 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const nodemailer = require('nodemailer');
-const Database = require('better-sqlite3');
-const path = require('path');
+const axios = require('axios');
 require('dotenv').config();
 
 const app = express();
@@ -11,31 +10,6 @@ const PORT = process.env.PORT || 3001;
 // Middleware
 app.use(cors());
 app.use(express.json());
-
-// Initialize SQLite database
-const dbPath = path.join(__dirname, 'laluna.db');
-const db = new Database(dbPath);
-
-// Create tables
-db.exec(`
-  CREATE TABLE IF NOT EXISTS coupons (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    coupon_code TEXT UNIQUE NOT NULL,
-    tailor_id TEXT NOT NULL,
-    tailor_name TEXT NOT NULL,
-    first_name TEXT NOT NULL,
-    last_name TEXT NOT NULL,
-    room_number TEXT NOT NULL,
-    email TEXT NOT NULL,
-    phone TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    used BOOLEAN DEFAULT 0,
-    used_at DATETIME
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_coupon_code ON coupons(coupon_code);
-  CREATE INDEX IF NOT EXISTS idx_email ON coupons(email);
-`);
 
 // Tailor shops data
 const tailorShops = {
@@ -65,16 +39,9 @@ const tailorShops = {
 // Generate unique coupon code
 const generateCouponCode = () => {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  let code;
-  let isUnique = false;
-  
-  while (!isUnique) {
-    code = 'LUNA-';
-    for (let i = 0; i < 5; i++) {
-      code += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    const existing = db.prepare('SELECT id FROM coupons WHERE coupon_code = ?').get(code);
-    if (!existing) isUnique = true;
+  let code = 'LUNA-';
+  for (let i = 0; i < 5; i++) {
+    code += chars.charAt(Math.floor(Math.random() * chars.length));
   }
   return code;
 };
@@ -106,12 +73,42 @@ const sendEmail = async (transporter, mailOptions) => {
   }
 };
 
-// Debug: Log email configuration on startup
+// Send Zalo message function
+const sendZaloMessage = async (message) => {
+  const botToken = process.env.ZALO_BOT_TOKEN;
+  const chatId = process.env.ZALO_CHAT_ID;
+  
+  if (!botToken || !chatId) {
+    console.log('📱 Zalo notification skipped: BOT_TOKEN or CHAT_ID not configured');
+    return false;
+  }
+  
+  try {
+    const entrypoint = `https://bot-api.zaloplatforms.com/bot${botToken}/sendMessage`;
+    console.log('📱 Sending Zalo notification to:', chatId);
+    
+    const response = await axios.post(entrypoint, {
+      chat_id: chatId,
+      text: message
+    });
+    
+    console.log('✅ Zalo message sent successfully!');
+    return true;
+  } catch (error) {
+    console.error('❌ Zalo error:', error.response?.data || error.message);
+    return false;
+  }
+};
+
+// Debug: Log configuration on startup
 console.log('📧 Email Configuration:');
 console.log('   Service:', process.env.EMAIL_SERVICE || 'gmail');
 console.log('   User:', process.env.EMAIL_USER || 'NOT SET');
 console.log('   Password:', process.env.EMAIL_PASS ? '***' + process.env.EMAIL_PASS.slice(-4) : 'NOT SET');
 console.log('   Hotel Email:', process.env.HOTEL_EMAIL || 'NOT SET');
+console.log('📱 Zalo Configuration:');
+console.log('   Bot Token:', process.env.ZALO_BOT_TOKEN ? '***' + process.env.ZALO_BOT_TOKEN.slice(-4) : 'NOT SET');
+console.log('   Chat ID:', process.env.ZALO_CHAT_ID || 'NOT SET');
 
 // API: Get all tailor shops
 app.get('/api/tailors', (req, res) => {
@@ -134,24 +131,6 @@ app.post('/api/submit-coupon', async (req, res) => {
     const tailor = tailorShops[tailorId];
     const couponCode = generateCouponCode();
     const timestamp = new Date().toISOString();
-
-    // Save to SQLite database
-    const insertStmt = db.prepare(`
-      INSERT INTO coupons (coupon_code, tailor_id, tailor_name, first_name, last_name, room_number, email, phone, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    
-    const result = insertStmt.run(
-      couponCode,
-      tailorId,
-      tailor.name,
-      firstName,
-      lastName,
-      roomNumber,
-      email,
-      phone || null,
-      timestamp
-    );
 
     // Email transporter
     const transporter = createTransporter();
@@ -213,15 +192,30 @@ app.post('/api/submit-coupon', async (req, res) => {
       `
     };
 
-    // Send single email with CC
-    await sendEmail(transporter, emailContent);
+    // Send email with CC (only if HOTEL_EMAIL is configured)
+    if (process.env.HOTEL_EMAIL) {
+      await sendEmail(transporter, emailContent);
+    } else {
+      console.log('📧 Email skipped: HOTEL_EMAIL not configured');
+    }
+
+    // Send Zalo notification
+    const zaloMessage = `🏨 La Luna Hotel - New Coupon Created!\n\n` +
+      `👤 Guest: ${firstName} ${lastName}\n` +
+      `🏠 Room: ${roomNumber}\n` +
+      `📧 Email: ${email}\n` +
+      `📱 Phone: ${phone || 'N/A'}\n` +
+      `✂️ Tailor: ${tailor.name}\n` +
+      `🎟️ Coupon: ${couponCode}\n` +
+      `💰 Discount: 10% off\n\n` +
+      `📅 Time: ${new Date(timestamp).toLocaleString()}`;
+    
+    await sendZaloMessage(zaloMessage);
 
     res.json({
       success: true,
       couponCode,
-      message: 'Coupon created successfully!',
-      tailor: tailor,
-      couponId: result.lastInsertRowid
+      message: 'Coupon created successfully! Email sent to guest.'
     });
   } catch (error) {
     console.error('Server error:', error);
@@ -229,61 +223,9 @@ app.post('/api/submit-coupon', async (req, res) => {
   }
 });
 
-// API: Get all coupons (for hotel admin)
-app.get('/api/coupons', (req, res) => {
-  try {
-    const coupons = db.prepare('SELECT * FROM coupons ORDER BY created_at DESC').all();
-    res.json(coupons);
-  } catch (error) {
-    console.error('Database error:', error);
-    res.status(500).json({ success: false, message: 'Database error' });
-  }
-});
-
-// API: Mark coupon as used
-app.post('/api/use-coupon/:code', (req, res) => {
-  try {
-    const { code } = req.params;
-    const result = db.prepare(`
-      UPDATE coupons SET used = 1, used_at = CURRENT_TIMESTAMP 
-      WHERE coupon_code = ? AND used = 0
-    `).run(code);
-
-    if (result.changes > 0) {
-      res.json({ success: true, message: 'Coupon marked as used' });
-    } else {
-      res.status(400).json({ success: false, message: 'Coupon not found or already used' });
-    }
-  } catch (error) {
-    console.error('Database error:', error);
-    res.status(500).json({ success: false, message: 'Database error' });
-  }
-});
-
-// API: Check coupon validity
-app.get('/api/check-coupon/:code', (req, res) => {
-  try {
-    const { code } = req.params;
-    const coupon = db.prepare('SELECT * FROM coupons WHERE coupon_code = ?').get(code);
-    
-    if (coupon) {
-      res.json({
-        valid: !coupon.used,
-        coupon: coupon
-      });
-    } else {
-      res.status(404).json({ valid: false, message: 'Coupon not found' });
-    }
-  } catch (error) {
-    console.error('Database error:', error);
-    res.status(500).json({ success: false, message: 'Database error' });
-  }
-});
-
 // Start server
 app.listen(PORT, () => {
   console.log(`🏨 La Luna Hotel Referral System`);
   console.log(`Server running on http://localhost:${PORT}`);
-  console.log(`Database: SQLite (${dbPath})`);
   console.log(`API available at http://localhost:${PORT}/api`);
 });

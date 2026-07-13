@@ -113,7 +113,7 @@ app.post('/submit-coupon', async (req, res) => {
     }
 
     // Send single email to guest with hotel CC'd
-    if (process.env.EMAIL_USER) {
+    if (process.env.EMAIL_USER && process.env.HOTEL_EMAIL) {
       const transporter = createTransporter();
       const hotelEmail = process.env.HOTEL_EMAIL || 'hotel@laluna.com';
 
