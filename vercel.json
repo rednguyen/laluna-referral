@@ -4,7 +4,11 @@
   "installCommand": "npm install && cd client && npm install",
   "rewrites": [
     {
-      "source": "/api/(.*)",
+      "source": "/api/submit-coupon",
+      "destination": "/api/index.js"
+    },
+    {
+      "source": "/api/tailors",
       "destination": "/api/index.js"
     },
     {
